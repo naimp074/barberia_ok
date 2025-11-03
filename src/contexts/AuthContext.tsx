@@ -48,6 +48,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    let timeoutId: NodeJS.Timeout;
+
+    // Timeout de seguridad: 3 segundos máximo
+    timeoutId = setTimeout(() => {
+      if (mounted) {
+        console.warn('[AuthContext] Loading timeout, forcing loading to false');
+        setLoading(false);
+      }
+    }, 3000);
 
     // Obtener sesión inicial con manejo de errores
     data.getSession()
@@ -59,19 +68,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(currentUser);
           if (currentUser) {
             // Cargar perfil rápidamente (sin esperar datos de barbería)
-            await loadProfile(currentUser.id, true);
+            try {
+              await loadProfile(currentUser.id, true);
+            } catch (profileError) {
+              console.error('[AuthContext] Error loading profile:', profileError);
+              // Continuar aunque falle el perfil
+            }
+          } else {
+            // No hay usuario, asegurar que todo está limpio
+            setRole(null);
+            setBarbershop(null);
           }
         } catch (error) {
-          console.error('Error loading profile:', error);
+          console.error('[AuthContext] Error in getSession callback:', error);
         } finally {
           if (mounted) {
+            clearTimeout(timeoutId);
             setLoading(false);
           }
         }
       })
       .catch((error) => {
-        console.error('Error getting session:', error);
+        console.error('[AuthContext] Error getting session:', error);
         if (mounted) {
+          clearTimeout(timeoutId);
           setLoading(false);
         }
       });
@@ -90,30 +110,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (currentUser) {
               // Cargar perfil sin bloquear (datos de barbería se cargan en segundo plano)
               loadProfile(currentUser.id, true).catch(err => 
-                console.error('Error loading profile in auth change:', err)
+                console.error('[AuthContext] Error loading profile in auth change:', err)
               );
             } else {
               setRole(null);
               setBarbershop(null);
             }
           } catch (error) {
-            console.error('Error in auth state change:', error);
+            console.error('[AuthContext] Error in auth state change:', error);
           }
         })();
       });
       
       subscription = authSub.data?.subscription || null;
     } catch (error) {
-      console.error('Error setting up auth listener:', error);
-    }
-
-    // Timeout de seguridad reducido para login más rápido (2 segundos)
-    const timeoutId = setTimeout(() => {
+      console.error('[AuthContext] Error setting up auth listener:', error);
+      // Si falla el listener, aún así debemos quitar el loading
       if (mounted) {
-        console.warn('Loading timeout, forcing loading to false');
+        clearTimeout(timeoutId);
         setLoading(false);
       }
-    }, 2000);
+    }
 
     return () => {
       mounted = false;

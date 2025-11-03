@@ -4,12 +4,14 @@ import * as data from '../lib/data';
 import { useAuth } from '../contexts/AuthContext';
 import { Calendar } from './Calendar';
 import { Navbar } from './Navbar';
+import { AnalyticsCharts } from './AnalyticsCharts';
 
 interface Service {
   id: string;
   name: string;
   price: number;
   timestamp: Date;
+  barberUserId?: string;
 }
 
 type ServiceType = data.ServiceType;
@@ -96,7 +98,11 @@ export function Dashboard() {
       // Los barberos solo ven sus propios servicios, el admin ve todos
       const barberUserId = role === 'barber' && user?.id ? user.id : undefined;
       const rows = await data.listServices(barbershop.id, barberUserId);
-      setServices(rows.map((r) => ({ ...r, timestamp: new Date(r.timestamp) })) as any);
+      setServices(rows.map((r) => ({ 
+        ...r, 
+        timestamp: new Date(r.timestamp),
+        barberUserId: r.barberUserId || r.user_id
+      })) as Service[]);
     } catch (error) {
       console.error('Error loading services:', error);
     } finally {
@@ -482,6 +488,13 @@ export function Dashboard() {
                 </table>
               </div>
             </div>
+
+            {/* Gráficos de Analíticas */}
+            <AnalyticsCharts
+              services={services}
+              barbers={barbers}
+              selectedMonth={calendarMonth}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
           <div className="space-y-4">

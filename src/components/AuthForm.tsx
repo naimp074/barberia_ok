@@ -58,82 +58,136 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
     }
 
     let isComplete = false;
+    let timeoutId: NodeJS.Timeout | null = null;
 
-    // Timeout de seguridad reducido: si pasa más de 10 segundos, cancelar
-    const timeoutId = setTimeout(() => {
+    // Timeout de seguridad: 20 segundos (reducido para feedback más rápido)
+    timeoutId = setTimeout(() => {
       if (!isComplete) {
-        console.error('Timeout en handleSubmit - la operación está tardando demasiado');
-        setError('La operación está tardando demasiado. Verifica:\n1. Tu conexión a internet\n2. Que Supabase esté funcionando\n3. Abre la consola (F12) para ver más detalles');
+        console.error('[AuthForm] ⏱️ TIMEOUT después de 20 segundos');
+        console.error('[AuthForm] El problema más probable es que el perfil no existe');
+        console.error('[AuthForm] Ejecuta ARREGLAR_PERFIL_RAPIDO.sql en Supabase SQL Editor');
+        isComplete = true;
+        setError('⏱️ La operación está tardando demasiado.\n\n' +
+          'PROBLEMA MÁS PROBABLE:\n' +
+          'Tu cuenta no tiene un perfil en la base de datos.\n\n' +
+          'SOLUCIÓN RÁPIDA:\n' +
+          '1. Abre Supabase Dashboard → SQL Editor\n' +
+          '2. Abre ARREGLAR_PERFIL_RAPIDO.sql\n' +
+          '3. Cambia el email en el script\n' +
+          '4. Ejecuta el script\n' +
+          '5. Intenta login nuevamente\n\n' +
+          'O revisa la consola (F12) para más detalles.');
         setLoading(false);
       }
-    }, 10000); // Reducido de 30 a 10 segundos
+    }, 20000); // 20 segundos
 
     try {
       if (isLogin) {
         console.log('[AuthForm] Iniciando sesión...');
         try {
           const result = await data.signInWithPassword({ email, password });
-          console.log('[AuthForm] Login exitoso:', result);
-          const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
-          // Mostrar alert y redirigir inmediatamente (el AuthContext se actualizará automáticamente)
-          isComplete = true;
-          clearTimeout(timeoutId);
-          showSuccessAlert('login', userRole);
-          onSuccess();
+          console.log('[AuthForm] Login exitoso');
+          
+          if (!isComplete) {
+            isComplete = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            
+            const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
+            showSuccessAlert('login', userRole);
+            
+            // Pequeño delay para que el usuario vea el mensaje de éxito
+            setTimeout(() => {
+              onSuccess();
+            }, 500);
+          }
         } catch (loginError: any) {
-          // El error ya fue lanzado por signInWithPassword, solo necesitamos asegurarnos de que se maneje
-          throw loginError;
+          if (!isComplete) {
+            isComplete = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            throw loginError;
+          }
         }
       } else {
+        // Validación de registro
         if (!barbershopName.trim()) {
-          clearTimeout(timeoutId);
-          throw new Error('Completa el nombre de la barbería');
+          if (timeoutId) clearTimeout(timeoutId);
+          setLoading(false);
+          setError('Completa el nombre de la barbería');
+          return;
         }
         
-        console.log('Iniciando registro...');
-        await data.signUp(email, password, barbershopName);
-        console.log('Registro exitoso, verificando sesión...');
+        console.log('[AuthForm] Iniciando registro...');
         
-        // Verificar si hay sesión activa después del registro
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        console.log('Sesión después del registro:', sessionData, sessionError);
-        
-        if (sessionData?.session) {
-          // Si hay sesión, mostrar éxito y redirigir inmediatamente
-          console.log('Sesión encontrada, redirigiendo...');
-          isComplete = true;
-          clearTimeout(timeoutId);
-          showSuccessAlert('register', 'admin');
-          onSuccess();
-        } else {
-          // Si no hay sesión, mostrar mensaje específico sobre verificación de email
-          console.warn('No hay sesión después del registro - requiere verificación de email');
-          isComplete = true;
-          clearTimeout(timeoutId);
-          setError('Tu cuenta se creó exitosamente. Revisa tu email para verificar tu cuenta. Después de verificar, podrás iniciar sesión.');
-          setLoading(false);
-          // No llamar a onSuccess() porque no hay sesión activa
-          return;
+        try {
+          const result = await data.signUp(email, password, barbershopName);
+          console.log('[AuthForm] ✅ Registro exitoso');
+          
+          if (!isComplete) {
+            isComplete = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            
+            // Verificar sesión después del registro
+            const { data: sessionData } = await supabase.auth.getSession();
+            
+            if (sessionData?.session) {
+              // Si hay sesión, redirigir inmediatamente
+              console.log('[AuthForm] Sesión encontrada, redirigiendo...');
+              showSuccessAlert('register', 'admin');
+              setTimeout(() => onSuccess(), 500);
+            } else {
+              // Si no hay sesión inmediatamente, intentar una vez más
+              console.log('[AuthForm] Esperando sesión...');
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              const { data: retrySession } = await supabase.auth.getSession();
+              
+              if (retrySession?.session) {
+                showSuccessAlert('register', 'admin');
+                setTimeout(() => onSuccess(), 500);
+              } else {
+                // Aunque no haya sesión, el registro fue exitoso
+                console.log('[AuthForm] Registro completado, pidiendo login manual');
+                setError('✅ Tu cuenta se creó exitosamente.\n\nAhora puedes iniciar sesión con tu email y contraseña.');
+                setLoading(false);
+                setIsLogin(true); // Cambiar a modo login automáticamente
+              }
+            }
+          }
+        } catch (signUpError: any) {
+          if (!isComplete) {
+            isComplete = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            throw signUpError;
+          }
         }
       }
     } catch (err: any) {
-      isComplete = true;
-      clearTimeout(timeoutId);
-      console.error('Error en handleSubmit:', err);
-      const errorMessage = err.message || 'Ocurrió un error';
-      
-      // Mensajes de error más específicos
-      if (errorMessage.includes('Supabase no está configurado') || errorMessage.includes('no está configurado')) {
-        setError('⚠️ Error de configuración: Falta configurar Supabase.\n\nCrea un archivo .env.local en la raíz del proyecto con:\nVITE_SUPABASE_URL=tu_url\nVITE_SUPABASE_ANON_KEY=tu_key\n\nLuego reinicia el servidor de desarrollo.');
-      } else if (errorMessage.includes('verificar tu email') || errorMessage.includes('email')) {
-        setError(errorMessage);
-      } else if (errorMessage.includes('network') || errorMessage.includes('Network') || errorMessage.includes('fetch')) {
-        setError('Error de conexión: No se pudo conectar a Supabase. Verifica tu conexión a internet y que las credenciales de Supabase sean correctas.');
-      } else {
-        setError(errorMessage);
+      if (!isComplete) {
+        isComplete = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        
+        console.error('[AuthForm] Error en handleSubmit:', err);
+        const errorMessage = err.message || 'Ocurrió un error inesperado';
+        
+        // Mensajes de error más específicos y útiles
+        if (errorMessage.includes('Supabase no está configurado') || errorMessage.includes('no está configurado')) {
+          setError('⚠️ Error de configuración\n\nFalta configurar Supabase. Crea un archivo .env.local en la raíz del proyecto con:\n\nVITE_SUPABASE_URL=tu_url\nVITE_SUPABASE_ANON_KEY=tu_key\n\nLuego reinicia el servidor de desarrollo.');
+        } else if (errorMessage.includes('verificar') || errorMessage.includes('email')) {
+          // Si el mensaje menciona verificación, simplificarlo
+          setError(errorMessage.replace(/verificar.*email.*/gi, 'Intenta iniciar sesión con tus credenciales.'));
+        } else if (errorMessage.includes('Tiempo de espera') || errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          setError('⏱️ Tiempo de espera agotado\n\nLa operación está tardando demasiado. Esto puede deberse a:\n\n1. Conexión a internet lenta\n2. Supabase no está disponible temporalmente\n\nIntenta nuevamente en unos momentos.');
+        } else if (errorMessage.includes('network') || errorMessage.includes('Network') || errorMessage.includes('fetch') || errorMessage.includes('connection')) {
+          setError('🌐 Error de conexión\n\nNo se pudo conectar con Supabase. Verifica:\n\n1. Tu conexión a internet\n2. Que las credenciales de Supabase sean correctas\n3. Que Supabase esté funcionando');
+        } else if (errorMessage.includes('incorrectos') || errorMessage.includes('Invalid login')) {
+          setError('❌ Credenciales incorrectas\n\nEl email o contraseña que ingresaste no son correctos. Verifica e intenta nuevamente.');
+        } else if (errorMessage.includes('ya está registrado') || errorMessage.includes('already registered')) {
+          setError('ℹ️ Email ya registrado\n\nEste email ya está registrado. Intenta iniciar sesión o recuperar tu contraseña.');
+        } else {
+          setError(errorMessage);
+        }
+        
+        setLoading(false);
       }
-      
-      setLoading(false);
     }
   };
 
