@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales para selects y opciones en tema oscuro */
+select {
+  @apply bg-black/40 border border-gray-700 text-white rounded-md outline-none;
+}
+select:focus {
+  @apply border-white;
+}
+select option {
+  background-color: #0b0b0b; /* muy oscuro */
+  color: #e5e7eb; /* gray-200 */
+}
+
+/* Listas desplegables en navegadores WebKit (mejora visual) */
+::-webkit-calendar-picker-indicator { filter: invert(1); }
