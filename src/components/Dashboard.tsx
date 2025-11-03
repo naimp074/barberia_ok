@@ -107,24 +107,56 @@ export function Dashboard() {
   };
 
   const addService = async (serviceType: ServiceType) => {
-    if (!user) return;
+    if (!user) {
+      alert('Error: No se encontró el usuario. Por favor, vuelve a iniciar sesión.');
+      return;
+    }
+    
     // Requiere perfil cargado
     if (!barbershop?.id) {
-      alert('No se encontró la barbería del usuario');
+      alert('Error: No se encontró la barbería del usuario. Por favor, recarga la página.');
       return;
     }
 
     try {
-      const created = await data.addService({
-            user_id: user.id,
-        barberUserId: role === 'admin' && assignBarberId ? assignBarberId : user.id,
+      const barberUserId = role === 'admin' && assignBarberId ? assignBarberId : user.id;
+      
+      console.log('Agregando servicio:', {
+        serviceType: serviceType.name,
+        barberUserId,
         barbershopId: barbershop.id,
-            name: serviceType.name,
-            price: serviceType.price,
+        user_id: user.id,
+        role,
       });
+
+      const created = await data.addService({
+        user_id: user.id,
+        barberUserId: barberUserId,
+        barbershopId: barbershop.id,
+        name: serviceType.name,
+        price: serviceType.price,
+      });
+      
+      console.log('Servicio agregado exitosamente:', created);
+      
+      // Actualizar la lista de servicios
       setServices((prev) => [{ ...created, timestamp: new Date(created.timestamp) } as any, ...prev]);
-    } catch (error) {
+      
+      // Recargar servicios para asegurar sincronización
+      await loadServices(false);
+    } catch (error: any) {
       console.error('Error adding service:', error);
+      
+      // Mostrar mensaje de error al usuario
+      const errorMessage = error?.message || error?.error?.message || 'Error desconocido al agregar el servicio';
+      
+      if (errorMessage.includes('permission') || errorMessage.includes('policy') || errorMessage.includes('RLS')) {
+        alert(`Error de permisos: No tienes permiso para agregar servicios. Verifica que tu perfil esté correctamente configurado. Detalle: ${errorMessage}`);
+      } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
+        alert('Error de conexión: No se pudo conectar con la base de datos. Verifica tu conexión a internet.');
+      } else {
+        alert(`Error al agregar servicio: ${errorMessage}\n\nRevisa la consola (F12) para más detalles.`);
+      }
     }
   };
 

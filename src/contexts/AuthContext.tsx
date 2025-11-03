@@ -18,7 +18,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<'admin' | 'barber' | null>(null);
   const [barbershop, setBarbershop] = useState<{ id: string; name: string } | null>(null);
 
-  const loadProfile = async (userId: string) => {
+  const loadProfile = async (userId: string, loadShopData = true) => {
     try {
       const profile = await data.getProfile(userId);
       if (!profile) {
@@ -27,15 +27,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const shop = await data.getBarbershop(profile.barbershopId);
-      if (!shop) {
-        setRole(null);
-        setBarbershop(null);
-        return;
-      }
-
+      // Establecer rol inmediatamente (más importante para el login)
       setRole(profile.role);
-      setBarbershop({ id: shop.id, name: shop.name });
+
+      // Cargar datos de barbería en segundo plano si se solicita (no bloquea el login)
+      if (loadShopData) {
+        const shop = await data.getBarbershop(profile.barbershopId);
+        if (shop) {
+          setBarbershop({ id: shop.id, name: shop.name });
+        } else {
+          setBarbershop(null);
+        }
+      }
     } catch (e) {
       console.error(e);
       setRole(null);
@@ -55,7 +58,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const currentUser = session?.user ?? null;
           setUser(currentUser);
           if (currentUser) {
-            await loadProfile(currentUser.id);
+            // Cargar perfil rápidamente (sin esperar datos de barbería)
+            await loadProfile(currentUser.id, true);
           }
         } catch (error) {
           console.error('Error loading profile:', error);
@@ -84,7 +88,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const currentUser = session?.user ?? null;
             setUser(currentUser);
             if (currentUser) {
-              await loadProfile(currentUser.id);
+              // Cargar perfil sin bloquear (datos de barbería se cargan en segundo plano)
+              loadProfile(currentUser.id, true).catch(err => 
+                console.error('Error loading profile in auth change:', err)
+              );
             } else {
               setRole(null);
               setBarbershop(null);
@@ -100,13 +107,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Error setting up auth listener:', error);
     }
 
-    // Timeout de seguridad para evitar loading infinito
+    // Timeout de seguridad reducido para login más rápido (2 segundos)
     const timeoutId = setTimeout(() => {
       if (mounted) {
         console.warn('Loading timeout, forcing loading to false');
         setLoading(false);
       }
-    }, 5000);
+    }, 2000);
 
     return () => {
       mounted = false;

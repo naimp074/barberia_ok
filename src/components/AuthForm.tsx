@@ -12,7 +12,6 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [barbershopName, setBarbershopName] = useState('');
-  const [numBarbers, setNumBarbers] = useState<number>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,37 +47,51 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
     setLoading(true);
     setError(null);
 
+    // Verificar configuración de Supabase primero
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      setLoading(false);
+      setError('⚠️ Supabase no está configurado. Crea un archivo .env.local en la raíz del proyecto con:\n\nVITE_SUPABASE_URL=tu_url\nVITE_SUPABASE_ANON_KEY=tu_key\n\nReinicia el servidor después de crear el archivo.');
+      return;
+    }
+
     let isComplete = false;
 
-    // Timeout de seguridad: si pasa más de 30 segundos, cancelar
+    // Timeout de seguridad reducido: si pasa más de 10 segundos, cancelar
     const timeoutId = setTimeout(() => {
       if (!isComplete) {
         console.error('Timeout en handleSubmit - la operación está tardando demasiado');
-        setError('La operación está tardando demasiado. Verifica tu conexión a internet y la configuración de Supabase.');
+        setError('La operación está tardando demasiado. Verifica:\n1. Tu conexión a internet\n2. Que Supabase esté funcionando\n3. Abre la consola (F12) para ver más detalles');
         setLoading(false);
       }
-    }, 30000);
+    }, 10000); // Reducido de 30 a 10 segundos
 
     try {
       if (isLogin) {
-        console.log('Iniciando sesión...');
-        const result = await data.signInWithPassword({ email, password });
-        console.log('Login exitoso:', result);
-        const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
-        showSuccessAlert('login', userRole);
-        // Esperar un momento para que el estado de auth se actualice
-        await new Promise(resolve => setTimeout(resolve, 500));
-        isComplete = true;
-        clearTimeout(timeoutId);
-        onSuccess();
-      } else {
-        if (!barbershopName || numBarbers < 1) {
+        console.log('[AuthForm] Iniciando sesión...');
+        try {
+          const result = await data.signInWithPassword({ email, password });
+          console.log('[AuthForm] Login exitoso:', result);
+          const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
+          // Mostrar alert y redirigir inmediatamente (el AuthContext se actualizará automáticamente)
+          isComplete = true;
           clearTimeout(timeoutId);
-          throw new Error('Completa el nombre de la barbería y la cantidad de barberos');
+          showSuccessAlert('login', userRole);
+          onSuccess();
+        } catch (loginError: any) {
+          // El error ya fue lanzado por signInWithPassword, solo necesitamos asegurarnos de que se maneje
+          throw loginError;
+        }
+      } else {
+        if (!barbershopName.trim()) {
+          clearTimeout(timeoutId);
+          throw new Error('Completa el nombre de la barbería');
         }
         
         console.log('Iniciando registro...');
-        await data.signUp(email, password, barbershopName, numBarbers);
+        await data.signUp(email, password, barbershopName);
         console.log('Registro exitoso, verificando sesión...');
         
         // Verificar si hay sesión activa después del registro
@@ -86,12 +99,11 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
         console.log('Sesión después del registro:', sessionData, sessionError);
         
         if (sessionData?.session) {
-          // Si hay sesión, mostrar éxito y esperar a que el AuthContext se actualice
+          // Si hay sesión, mostrar éxito y redirigir inmediatamente
           console.log('Sesión encontrada, redirigiendo...');
-          showSuccessAlert('register', 'admin');
-          await new Promise(resolve => setTimeout(resolve, 1000));
           isComplete = true;
           clearTimeout(timeoutId);
+          showSuccessAlert('register', 'admin');
           onSuccess();
         } else {
           // Si no hay sesión, mostrar mensaje específico sobre verificación de email
@@ -111,10 +123,12 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
       const errorMessage = err.message || 'Ocurrió un error';
       
       // Mensajes de error más específicos
-      if (errorMessage.includes('Supabase no está configurado')) {
-        setError('Error de configuración: Falta configurar Supabase. Verifica que tengas VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY en tu archivo .env.local');
+      if (errorMessage.includes('Supabase no está configurado') || errorMessage.includes('no está configurado')) {
+        setError('⚠️ Error de configuración: Falta configurar Supabase.\n\nCrea un archivo .env.local en la raíz del proyecto con:\nVITE_SUPABASE_URL=tu_url\nVITE_SUPABASE_ANON_KEY=tu_key\n\nLuego reinicia el servidor de desarrollo.');
       } else if (errorMessage.includes('verificar tu email') || errorMessage.includes('email')) {
         setError(errorMessage);
+      } else if (errorMessage.includes('network') || errorMessage.includes('Network') || errorMessage.includes('fetch')) {
+        setError('Error de conexión: No se pudo conectar a Supabase. Verifica tu conexión a internet y que las credenciales de Supabase sean correctas.');
       } else {
         setError(errorMessage);
       }
@@ -196,42 +210,24 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
             </div>
 
             {!isLogin && (
-              <>
-                <div>
-                  <label htmlFor="barbershopName" className="block text-sm font-medium text-gray-300 mb-2">
-                    Nombre de la barbería
-                  </label>
-                  <input
-                    id="barbershopName"
-                    type="text"
-                    value={barbershopName}
-                    onChange={(e) => setBarbershopName(e.target.value)}
-                    required
-                    className="w-full px-4 py-3 bg-white/5 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
-                    placeholder="Mi Barbería"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="numBarbers" className="block text-sm font-medium text-gray-300 mb-2">
-                    ¿Cuántos barberos son?
-                  </label>
-                  <input
-                    id="numBarbers"
-                    type="number"
-                    min={1}
-                    value={numBarbers}
-                    onChange={(e) => setNumBarbers(parseInt(e.target.value || '1', 10))}
-                    required
-                    className="w-full px-4 py-3 bg-white/5 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
-                    placeholder="1"
-                  />
-                </div>
-              </>
+              <div>
+                <label htmlFor="barbershopName" className="block text-sm font-medium text-gray-300 mb-2">
+                  Nombre de la barbería
+                </label>
+                <input
+                  id="barbershopName"
+                  type="text"
+                  value={barbershopName}
+                  onChange={(e) => setBarbershopName(e.target.value)}
+                  required
+                  className="w-full px-4 py-3 bg-white/5 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
+                  placeholder="Mi Barbería"
+                />
+              </div>
             )}
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm">
+              <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 text-red-400 text-sm whitespace-pre-line">
                 {error}
               </div>
             )}

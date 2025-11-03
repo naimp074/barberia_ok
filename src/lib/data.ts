@@ -31,7 +31,7 @@ export interface ServiceRecord {
 // AUTENTICACIÓN
 // ============================================
 
-export async function signUp(email: string, password: string, barbershopName: string, numBarbers: number) {
+export async function signUp(email: string, password: string, barbershopName: string, numBarbers: number = 1) {
   console.log('[signUp] Iniciando registro para:', email);
   
   // Crear usuario en Supabase Auth
@@ -216,17 +216,40 @@ export async function signUp(email: string, password: string, barbershopName: st
 }
 
 export async function signInWithPassword({ email, password }: { email: string; password: string }) {
+  console.log('[signInWithPassword] Iniciando login para:', email);
+  
+  // Usar Promise.all para hacer las operaciones en paralelo cuando sea posible
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) throw new Error('Credenciales inválidas');
-  if (!data.user) throw new Error('Error en autenticación');
+  if (error) {
+    console.error('[signInWithPassword] Error en auth:', error);
+    throw new Error(error.message || 'Credenciales inválidas');
+  }
+  
+  if (!data.user) {
+    console.error('[signInWithPassword] Usuario no encontrado en respuesta');
+    throw new Error('Error en autenticación');
+  }
 
-  // Obtener perfil del usuario
+  console.log('[signInWithPassword] Usuario autenticado:', data.user.id);
+
+  // Obtener perfil del usuario (solo lo necesario para login)
+  console.log('[signInWithPassword] Obteniendo perfil...');
   const profile = await getProfile(data.user.id);
-  if (!profile) throw new Error('Perfil no encontrado');
+  
+  if (!profile) {
+    console.error('[signInWithPassword] Perfil no encontrado para usuario:', data.user.id);
+    console.error('[signInWithPassword] Esto puede deberse a:');
+    console.error('  1. El usuario no tiene un perfil creado en user_profiles');
+    console.error('  2. Las políticas RLS están bloqueando el acceso');
+    console.error('  3. El usuario no está asociado a una barbería');
+    throw new Error('Perfil no encontrado. Tu cuenta no tiene un perfil configurado. Por favor, contacta al administrador o crea una nueva cuenta.');
+  }
+
+  console.log('[signInWithPassword] Perfil encontrado:', profile);
 
   return {
     user: {
@@ -321,39 +344,60 @@ export function onAuthStateChange(
 
 export async function getProfile(userId: string) {
   try {
+    console.log('[getProfile] Buscando perfil para usuario:', userId);
+    
+    // Usar select más específico y agregar límite para respuesta más rápida
     const { data, error } = await supabase
       .from('user_profiles')
       .select('role, barbershop_id')
       .eq('user_id', userId)
+      .limit(1)
       .single();
 
     if (error) {
       // Si no se encuentra el perfil, no es necesariamente un error crítico
       if (error.code === 'PGRST116') {
         // No se encontró ningún registro
+        console.warn('[getProfile] No se encontró perfil (PGRST116) para usuario:', userId);
+        console.warn('[getProfile] Esto significa que el usuario no tiene registro en user_profiles');
         return null;
       }
-      console.error('Error getting profile:', error);
+      
+      // Error de permisos RLS
+      if (error.code === '42501' || error.message?.includes('policy') || error.message?.includes('RLS')) {
+        console.error('[getProfile] Error de permisos RLS:', error);
+        console.error('[getProfile] Las políticas RLS pueden estar bloqueando el acceso a user_profiles');
+      } else {
+        console.error('[getProfile] Error obteniendo perfil:', error);
+        console.error('[getProfile] Código:', error.code, 'Mensaje:', error.message);
+      }
       return null;
     }
 
-    if (!data) return null;
+    if (!data) {
+      console.warn('[getProfile] No se recibieron datos para usuario:', userId);
+      return null;
+    }
 
+    console.log('[getProfile] Perfil encontrado:', { role: data.role, barbershop_id: data.barbershop_id });
     return {
       role: data.role as Role,
       barbershopId: data.barbershop_id,
     };
-  } catch (err) {
-    console.error('Error in getProfile:', err);
+  } catch (err: any) {
+    console.error('[getProfile] Excepción al obtener perfil:', err);
+    console.error('[getProfile] Tipo de error:', err?.constructor?.name);
     return null;
   }
 }
 
 export async function getBarbershop(barbershopId: string) {
+  // Optimizado: solo seleccionar campos necesarios y usar límite
   const { data, error } = await supabase
     .from('barbershops')
     .select('id, name, owner_user_id, num_barbers')
     .eq('id', barbershopId)
+    .limit(1)
     .single();
 
   if (error || !data) return null;
@@ -401,6 +445,28 @@ export async function listServices(barbershopId: string, barberUserId?: string):
 export async function addService(
   record: Omit<ServiceRecord, 'id' | 'timestamp'> & { timestamp?: string }
 ) {
+  // Validar que los campos requeridos estén presentes
+  if (!record.barbershopId) {
+    throw new Error('barbershopId es requerido');
+  }
+  if (!record.barberUserId) {
+    throw new Error('barberUserId es requerido');
+  }
+  if (!record.name) {
+    throw new Error('El nombre del servicio es requerido');
+  }
+  if (!record.price || record.price <= 0) {
+    throw new Error('El precio del servicio debe ser mayor a 0');
+  }
+
+  console.log('[addService] Insertando servicio:', {
+    barbershop_id: record.barbershopId,
+    barber_user_id: record.barberUserId,
+    user_id: record.user_id || record.barberUserId,
+    name: record.name,
+    price: record.price,
+  });
+
   const { data, error } = await supabase
     .from('services')
     .insert({
@@ -414,7 +480,26 @@ export async function addService(
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error('[addService] Error de Supabase:', error);
+    
+    // Mensajes de error más descriptivos
+    if (error.code === '42501' || error.message.includes('policy') || error.message.includes('RLS')) {
+      throw new Error(`Error de permisos: No tienes permiso para agregar servicios en esta barbería. Verifica que tu perfil esté correctamente configurado. Código: ${error.code}`);
+    } else if (error.code === '23503') {
+      throw new Error(`Error de referencia: El barbero o la barbería especificados no existen. Código: ${error.code}`);
+    } else if (error.code === '23505') {
+      throw new Error(`Error: Ya existe un servicio con estos datos. Código: ${error.code}`);
+    } else {
+      throw new Error(`Error al agregar servicio: ${error.message || 'Error desconocido'} (Código: ${error.code || 'N/A'})`);
+    }
+  }
+
+  if (!data) {
+    throw new Error('No se recibieron datos al crear el servicio');
+  }
+
+  console.log('[addService] Servicio creado exitosamente:', data);
 
   return {
     id: data.id,
