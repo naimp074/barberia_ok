@@ -81,16 +81,37 @@ export async function signUp(email: string, password: string, barbershopName: st
 
   console.log('[signUp] Barbería creada con ID:', barbershopId);
 
-  // Obtener datos completos de la barbería
-  const { data: shopData, error: fetchError } = await supabase
+  // Intentar obtener datos completos de la barbería (puede fallar por RLS)
+  // Si falla, usamos los datos que ya tenemos
+  let shopData: any = null;
+  const { data: fetchedData, error: fetchError } = await supabase
     .from('barbershops')
     .select('id, name, owner_user_id, num_barbers')
     .eq('id', barbershopId)
-    .single();
+    .maybeSingle();
 
-  if (fetchError || !shopData) {
-    console.error('[signUp] Error obteniendo datos:', fetchError);
-    throw new Error('Error obteniendo datos de la barbería');
+  if (fetchError) {
+    console.warn('[signUp] ⚠️ No se pudo obtener datos de la barbería (probable RLS):', fetchError);
+    console.warn('[signUp] Usando datos conocidos del barbershopId');
+    // Construir datos básicos con lo que sabemos
+    shopData = {
+      id: barbershopId,
+      name: barbershopName.trim(),
+      owner_user_id: userId,
+      num_barbers: 1,
+    };
+  } else if (fetchedData) {
+    shopData = fetchedData;
+    console.log('[signUp] Datos de barbería obtenidos correctamente');
+  } else {
+    // Si no hay datos pero no hay error, usar datos conocidos
+    console.warn('[signUp] No se encontraron datos, usando datos conocidos');
+    shopData = {
+      id: barbershopId,
+      name: barbershopName.trim(),
+      owner_user_id: userId,
+      num_barbers: 1,
+    };
   }
 
   console.log('[signUp] === REGISTRO COMPLETADO ===');
@@ -106,7 +127,7 @@ export async function signUp(email: string, password: string, barbershopName: st
       id: shopData.id,
       name: shopData.name,
       ownerUserId: shopData.owner_user_id,
-      numBarbers: shopData.num_barbers,
+      numBarbers: shopData.num_barbers || 1,
     },
   };
 }
