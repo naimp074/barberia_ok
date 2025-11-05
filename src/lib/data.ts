@@ -127,9 +127,26 @@ export async function signInWithPassword({ email, password }: { email: string; p
   });
 
   if (error) {
-    console.error('[signIn] Error de autenticación:', error);
+    console.error('[signIn] ❌ Error de autenticación:', error);
+    console.error('[signIn] Código de error:', error.status || error.code);
+    console.error('[signIn] Mensaje:', error.message);
+    
+    // Verificar si es un error 400 (Bad Request)
+    if (error.status === 400 || error.message?.includes('400')) {
+      console.error('[signIn] ⚠️ ERROR 400 - Posibles causas:');
+      console.error('  1. Variables de entorno incorrectas en Netlify');
+      console.error('  2. URL de Supabase apunta a otro proyecto');
+      console.error('  3. Anon Key incorrecta');
+      console.error('  4. Email/contraseña incorrectos');
+      console.error('[signIn] Verifica en la consola el diagnóstico de [Supabase Config]');
+    }
+    
     if (error.message?.includes('Invalid login') || error.message?.includes('invalid')) {
-      throw new Error('Email o contraseña incorrectos. Verifica tus credenciales.');
+      throw new Error('Email o contraseña incorrectos.\n\n' +
+        'Si funciona localmente pero no en Netlify:\n' +
+        '• Verifica que las variables de entorno en Netlify sean correctas\n' +
+        '• Verifica que la URL de Supabase apunte al mismo proyecto\n' +
+        '• Revisa la consola para ver el diagnóstico de configuración');
     }
     throw new Error(error.message || 'Error al iniciar sesión');
   }
