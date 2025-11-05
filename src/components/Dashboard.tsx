@@ -193,7 +193,7 @@ export function Dashboard() {
       const { link, email, password } = await data.createInvite(inviteEmail, barbershop.id);
       setInviteLink(link);
       
-      // Enviar correo con las credenciales
+      // Enviar correo con las credenciales (EmailJS está desactivado)
       try {
         const { sendInviteEmail } = await import('../lib/email');
         await sendInviteEmail({ 
@@ -201,11 +201,12 @@ export function Dashboard() {
           inviteLink: link, 
           password: password 
         });
-        alert('Invitación generada y correo enviado exitosamente');
+        // EmailJS está desactivado, mostrar datos manualmente
+        alert(`✅ Invitación generada exitosamente\n\n📋 Datos de la invitación:\n\nEmail: ${email}\nContraseña: ${password}\n\n🔗 Link de registro:\n${link}\n\n📝 Nota: EmailJS está desactivado. Copia estos datos y compártelos manualmente.`);
       } catch (emailErr: any) {
-        // Si falla el envío del correo, mostrar el link manualmente
+        // Si falla, mostrar el link manualmente
         console.error('Error enviando correo:', emailErr);
-        alert(`Invitación generada. Link: ${link}\nEmail: ${email}\nContraseña: ${password}\n\nNota: No se pudo enviar el correo automáticamente.`);
+        alert(`✅ Invitación generada\n\n📋 Datos de la invitación:\n\nEmail: ${email}\nContraseña: ${password}\n\n🔗 Link de registro:\n${link}\n\n⚠️ Nota: No se pudo enviar el correo automáticamente.`);
       }
       
       // Limpiar el formulario

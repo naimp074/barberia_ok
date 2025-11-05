@@ -1,10 +1,5 @@
-import emailjs from '@emailjs/browser';
-
-// Inicializar EmailJS con las credenciales de entorno
-// El usuario necesita configurar estas variables en .env.local
-const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
-const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
-const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+// EmailJS está desactivado - La aplicación muestra los datos de invitación en un alert
+// Para reactivarlo, descomenta el código y configura las variables de entorno
 
 interface InviteEmailParams {
   toEmail: string;
@@ -12,24 +7,38 @@ interface InviteEmailParams {
   password: string;
 }
 
+/**
+ * Función para enviar invitaciones por email.
+ * EmailJS está desactivado - Los datos se muestran en un alert para que los copies manualmente.
+ * 
+ * Para reactivar EmailJS:
+ * 1. Descomenta el import: import emailjs from '@emailjs/browser';
+ * 2. Configura las variables de entorno en .env.local:
+ *    - VITE_EMAILJS_SERVICE_ID
+ *    - VITE_EMAILJS_TEMPLATE_ID
+ *    - VITE_EMAILJS_PUBLIC_KEY
+ * 3. Descomenta el código de envío de email
+ */
 export async function sendInviteEmail({ toEmail, inviteLink, password }: InviteEmailParams): Promise<void> {
-  // Si EmailJS no está configurado, mostrar un mensaje y simular el envío
+  // EmailJS desactivado - Simular éxito
+  // Los datos se mostrarán en un alert en Dashboard.tsx
+  console.log('EmailJS desactivado. Datos de invitación:', { toEmail, inviteLink, password });
+  return Promise.resolve();
+
+  /* CÓDIGO DESACTIVADO - Para reactivar EmailJS, descomenta esto:
+  
+  const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID;
+  const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_TEMPLATE_ID;
+  const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY;
+
   if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
-    console.warn('EmailJS no está configurado. Para habilitar el envío de correos:');
-    console.warn('1. Crea una cuenta en https://www.emailjs.com');
-    console.warn('2. Crea un servicio de email y una plantilla');
-    console.warn('3. Agrega las variables VITE_EMAILJS_SERVICE_ID, VITE_EMAILJS_TEMPLATE_ID y VITE_EMAILJS_PUBLIC_KEY a .env.local');
-    console.warn('Datos de la invitación:', { toEmail, inviteLink, password });
-    
-    // En desarrollo, simular éxito
+    console.warn('EmailJS no está configurado. Mostrando datos en alert.');
     return Promise.resolve();
   }
 
   try {
-    // Inicializar EmailJS
     emailjs.init(EMAILJS_PUBLIC_KEY);
 
-    // Enviar el correo
     const templateParams = {
       to_email: toEmail,
       invite_link: inviteLink,
@@ -58,5 +67,6 @@ Una vez que accedas, podrás cambiar tu contraseña desde tu perfil.
     console.error('Error enviando correo:', error);
     throw new Error('No se pudo enviar el correo electrónico. Por favor, verifica la configuración de EmailJS.');
   }
+  */
 }
 
