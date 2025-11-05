@@ -84,28 +84,20 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
     try {
       if (isLogin) {
         console.log('[AuthForm] Iniciando sesión...');
-        try {
-          const result = await data.signInWithPassword({ email, password });
-          console.log('[AuthForm] Login exitoso');
+        const result = await data.signInWithPassword({ email, password });
+        console.log('[AuthForm] ✅ Login exitoso');
+        
+        if (!isComplete) {
+          isComplete = true;
+          if (timeoutId) clearTimeout(timeoutId);
           
-          if (!isComplete) {
-            isComplete = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            
-            const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
-            showSuccessAlert('login', userRole);
-            
-            // Pequeño delay para que el usuario vea el mensaje de éxito
-            setTimeout(() => {
-              onSuccess();
-            }, 500);
-          }
-        } catch (loginError: any) {
-          if (!isComplete) {
-            isComplete = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            throw loginError;
-          }
+          const userRole = result.user?.role === 'admin' ? 'admin' : result.user?.role === 'barber' ? 'barber' : null;
+          showSuccessAlert('login', userRole);
+          
+          // Redirigir después de un breve delay
+          setTimeout(() => {
+            onSuccess();
+          }, 300);
         }
       } else {
         // Validación de registro
@@ -117,46 +109,29 @@ export function AuthForm({ onSuccess }: AuthFormProps) {
         }
         
         console.log('[AuthForm] Iniciando registro...');
+        const result = await data.signUp(email, password, barbershopName);
+        console.log('[AuthForm] ✅ Registro exitoso');
         
-        try {
-          const result = await data.signUp(email, password, barbershopName);
-          console.log('[AuthForm] ✅ Registro exitoso');
+        if (!isComplete) {
+          isComplete = true;
+          if (timeoutId) clearTimeout(timeoutId);
           
-          if (!isComplete) {
-            isComplete = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            
-            // Verificar sesión después del registro
-            const { data: sessionData } = await supabase.auth.getSession();
-            
-            if (sessionData?.session) {
-              // Si hay sesión, redirigir inmediatamente
-              console.log('[AuthForm] Sesión encontrada, redirigiendo...');
-              showSuccessAlert('register', 'admin');
-              setTimeout(() => onSuccess(), 500);
-            } else {
-              // Si no hay sesión inmediatamente, intentar una vez más
-              console.log('[AuthForm] Esperando sesión...');
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              const { data: retrySession } = await supabase.auth.getSession();
-              
-              if (retrySession?.session) {
-                showSuccessAlert('register', 'admin');
-                setTimeout(() => onSuccess(), 500);
-              } else {
-                // Aunque no haya sesión, el registro fue exitoso
-                console.log('[AuthForm] Registro completado, pidiendo login manual');
-                setError('✅ Tu cuenta se creó exitosamente.\n\nAhora puedes iniciar sesión con tu email y contraseña.');
-                setLoading(false);
-                setIsLogin(true); // Cambiar a modo login automáticamente
-              }
-            }
-          }
-        } catch (signUpError: any) {
-          if (!isComplete) {
-            isComplete = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            throw signUpError;
+          // Esperar un momento para que la sesión se establezca
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Verificar sesión
+          const { data: sessionData } = await supabase.auth.getSession();
+          
+          if (sessionData?.session) {
+            console.log('[AuthForm] Sesión encontrada, redirigiendo...');
+            showSuccessAlert('register', 'admin');
+            setTimeout(() => onSuccess(), 300);
+          } else {
+            // Si no hay sesión, pedir login manual
+            console.log('[AuthForm] Registro completado, pidiendo login manual');
+            setError('✅ Tu cuenta se creó exitosamente.\n\nAhora puedes iniciar sesión con tu email y contraseña.');
+            setLoading(false);
+            setIsLogin(true); // Cambiar a modo login automáticamente
           }
         }
       }

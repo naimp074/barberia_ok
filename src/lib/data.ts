@@ -20,7 +20,7 @@ export interface ServiceRecord {
 }
 
 // ============================================
-// AUTENTICACIÓN - VERSIÓN SIMPLIFICADA
+// AUTENTICACIÓN - VERSIÓN SIMPLIFICADA Y ROBUSTA
 // ============================================
 
 export async function signUp(email: string, password: string, barbershopName: string) {
@@ -31,105 +31,100 @@ export async function signUp(email: string, password: string, barbershopName: st
   if (!password || password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres');
   if (!barbershopName?.trim()) throw new Error('El nombre de la barbería es requerido');
 
-  // Crear usuario (sin verificación de email)
-  console.log('[signUp] Creando usuario en Supabase Auth...');
-  const { data: authData, error: authError } = await supabase.auth.signUp({
-    email: email.trim(),
-    password: password.trim(),
-    options: {
-      emailRedirectTo: undefined,
-      data: {
-        barbershop_name: barbershopName.trim(),
+  try {
+    // Paso 1: Crear usuario en Supabase Auth
+    console.log('[signUp] Creando usuario en Supabase Auth...');
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: email.trim(),
+      password: password.trim(),
+      options: {
+        emailRedirectTo: undefined,
+        data: {
+          barbershop_name: barbershopName.trim(),
+        },
       },
-    },
-  });
+    });
 
-  if (authError) {
-    console.error('[signUp] Error en signUp:', authError);
-    if (authError.message?.includes('already registered')) {
-      throw new Error('Este email ya está registrado. Intenta iniciar sesión.');
+    if (authError) {
+      console.error('[signUp] Error en signUp:', authError);
+      if (authError.message?.includes('already registered') || authError.message?.includes('already exists')) {
+        throw new Error('Este email ya está registrado. Intenta iniciar sesión.');
+      }
+      throw new Error(authError.message || 'Error creando usuario');
     }
-    throw new Error(authError.message || 'Error creando usuario');
-  }
 
-  if (!authData.user) {
-    throw new Error('No se pudo crear el usuario');
-  }
-
-  const userId = authData.user.id;
-  console.log('[signUp] Usuario creado con ID:', userId);
-
-  // Crear barbería y perfil usando función RPC (SIEMPRE intentar primero)
-  console.log('[signUp] Creando barbería y perfil con función RPC...');
-  const { data: barbershopId, error: rpcError } = await supabase.rpc(
-    'create_barbershop_on_signup',
-    {
-      p_user_id: userId,
-      p_barbershop_name: barbershopName.trim(),
-      p_num_barbers: 1,
+    if (!authData.user) {
+      throw new Error('No se pudo crear el usuario');
     }
-  );
 
-  if (rpcError) {
-    console.error('[signUp] Error en RPC:', rpcError);
-    throw new Error(`Error creando barbería: ${rpcError.message}. Verifica que la función create_barbershop_on_signup existe en Supabase.`);
-  }
+    const userId = authData.user.id;
+    console.log('[signUp] Usuario creado con ID:', userId);
 
-  if (!barbershopId) {
-    throw new Error('Error: No se recibió el ID de la barbería');
-  }
+    // Paso 2: Crear barbería y perfil usando función RPC
+    console.log('[signUp] Creando barbería y perfil con función RPC...');
+    const { data: barbershopId, error: rpcError } = await supabase.rpc(
+      'create_barbershop_on_signup',
+      {
+        p_user_id: userId,
+        p_barbershop_name: barbershopName.trim(),
+        p_num_barbers: 1,
+      }
+    );
 
-  console.log('[signUp] Barbería creada con ID:', barbershopId);
+    if (rpcError) {
+      console.error('[signUp] Error en RPC:', rpcError);
+      throw new Error(`Error creando barbería: ${rpcError.message}. Verifica que la función create_barbershop_on_signup existe en Supabase.`);
+    }
 
-  // Intentar obtener datos completos de la barbería (puede fallar por RLS)
-  // Si falla, usamos los datos que ya tenemos
-  let shopData: any = null;
-  const { data: fetchedData, error: fetchError } = await supabase
-    .from('barbershops')
-    .select('id, name, owner_user_id, num_barbers')
-    .eq('id', barbershopId)
-    .maybeSingle();
+    if (!barbershopId) {
+      throw new Error('Error: No se recibió el ID de la barbería');
+    }
 
-  if (fetchError) {
-    console.warn('[signUp] ⚠️ No se pudo obtener datos de la barbería (probable RLS):', fetchError);
-    console.warn('[signUp] Usando datos conocidos del barbershopId');
-    // Construir datos básicos con lo que sabemos
-    shopData = {
+    console.log('[signUp] Barbería creada con ID:', barbershopId);
+
+    // Paso 3: Intentar obtener datos de la barbería (con fallback si falla)
+    let shopData: any = {
       id: barbershopId,
       name: barbershopName.trim(),
       owner_user_id: userId,
       num_barbers: 1,
     };
-  } else if (fetchedData) {
-    shopData = fetchedData;
-    console.log('[signUp] Datos de barbería obtenidos correctamente');
-  } else {
-    // Si no hay datos pero no hay error, usar datos conocidos
-    console.warn('[signUp] No se encontraron datos, usando datos conocidos');
-    shopData = {
-      id: barbershopId,
-      name: barbershopName.trim(),
-      owner_user_id: userId,
-      num_barbers: 1,
-    };
-  }
 
-  console.log('[signUp] === REGISTRO COMPLETADO ===');
-  
-  return {
-    user: {
-      id: userId,
-      email: authData.user.email || email,
-      role: 'admin' as Role,
-      barbershopId: shopData.id,
-    },
-    barbershop: {
-      id: shopData.id,
-      name: shopData.name,
-      ownerUserId: shopData.owner_user_id,
-      numBarbers: shopData.num_barbers || 1,
-    },
-  };
+    try {
+      const { data: fetchedData } = await supabase
+        .from('barbershops')
+        .select('id, name, owner_user_id, num_barbers')
+        .eq('id', barbershopId)
+        .maybeSingle();
+      
+      if (fetchedData) {
+        shopData = fetchedData;
+        console.log('[signUp] Datos de barbería obtenidos correctamente');
+      }
+    } catch (fetchErr) {
+      console.warn('[signUp] No se pudieron obtener datos de barbería, usando datos conocidos');
+    }
+
+    console.log('[signUp] === REGISTRO COMPLETADO ===');
+    
+    return {
+      user: {
+        id: userId,
+        email: authData.user.email || email,
+        role: 'admin' as Role,
+        barbershopId: shopData.id,
+      },
+      barbershop: {
+        id: shopData.id,
+        name: shopData.name,
+        ownerUserId: shopData.owner_user_id,
+        numBarbers: shopData.num_barbers || 1,
+      },
+    };
+  } catch (error: any) {
+    console.error('[signUp] Error completo:', error);
+    throw error;
+  }
 }
 
 export async function signInWithPassword({ email, password }: { email: string; password: string }) {
@@ -140,176 +135,56 @@ export async function signInWithPassword({ email, password }: { email: string; p
   if (!email || !email.includes('@')) throw new Error('Email inválido');
   if (!password) throw new Error('La contraseña es requerida');
 
-  // Paso 1: Autenticar con Supabase
-  console.log('[signIn] Autenticando...');
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: email.trim(),
-    password: password.trim(),
-  });
+  try {
+    // Paso 1: Autenticar con Supabase
+    console.log('[signIn] Autenticando con Supabase...');
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password: password.trim(),
+    });
 
-  if (error) {
-    console.error('[signIn] ❌ Error de autenticación:', error);
-    console.error('[signIn] Código de error:', error.status || error.code);
-    console.error('[signIn] Mensaje:', error.message);
-    
-    // Verificar si es un error 400 (Bad Request)
-    if (error.status === 400 || error.message?.includes('400')) {
-      console.error('[signIn] ⚠️ ERROR 400 - Posibles causas:');
-      console.error('  1. Variables de entorno incorrectas en Netlify');
-      console.error('  2. URL de Supabase apunta a otro proyecto');
-      console.error('  3. Anon Key incorrecta');
-      console.error('  4. Email/contraseña incorrectos');
-      console.error('[signIn] Verifica en la consola el diagnóstico de [Supabase Config]');
-    }
-    
-    if (error.message?.includes('Invalid login') || error.message?.includes('invalid')) {
-      throw new Error('Email o contraseña incorrectos.\n\n' +
-        'Si funciona localmente pero no en Netlify:\n' +
-        '• Verifica que las variables de entorno en Netlify sean correctas\n' +
-        '• Verifica que la URL de Supabase apunte al mismo proyecto\n' +
-        '• Revisa la consola para ver el diagnóstico de configuración');
-    }
-    throw new Error(error.message || 'Error al iniciar sesión');
-  }
-
-  if (!data?.user) {
-    throw new Error('No se recibió información del usuario');
-  }
-
-  console.log('[signIn] Usuario autenticado:', data.user.id);
-
-  // Paso 2: Obtener perfil (sin complicaciones)
-  console.log('[signIn] Obteniendo perfil...');
-  const profile = await getProfile(data.user.id);
-  
-  if (!profile) {
-    console.error('[signIn] ❌ Perfil no encontrado para usuario:', data.user.id);
-    console.error('[signIn] Esto puede ser por:');
-    console.error('  1. El perfil no existe en la base de datos');
-    console.error('  2. Las políticas RLS están bloqueando el acceso');
-    console.error('  3. El usuario no está asociado a una barbería');
-    
-    // Paso 1: Intentar verificar si el perfil existe pero RLS lo bloquea
-    // Intentar leer directamente como admin (si es posible)
-    console.log('[signIn] Intentando verificar existencia del perfil...');
-    const { data: profileCheck, error: checkError } = await supabase
-      .from('user_profiles')
-      .select('user_id, role, barbershop_id')
-      .eq('user_id', data.user.id)
-      .maybeSingle();
-    
-    if (checkError) {
-      console.error('[signIn] Error verificando perfil:', checkError);
-      if (checkError.code === '42501' || checkError.message?.includes('policy')) {
-        console.error('[signIn] ⚠️ RLS está bloqueando - El perfil puede existir pero no se puede leer');
-        console.error('[signIn] Verifica la política "Users can view own profile" en Supabase');
-      }
-    } else if (profileCheck) {
-      console.error('[signIn] ⚠️ PERFIL EXISTE pero getProfile no lo encontró - problema de RLS');
-      console.error('[signIn] Perfil encontrado:', profileCheck);
-    }
-    
-    // Paso 2: Intentar completar registro automáticamente si tiene metadata
-    const userMetadata = data.user.user_metadata;
-    const barbershopName = userMetadata?.barbershop_name;
-    
-    if (barbershopName) {
-      console.log('[signIn] Intentando completar registro automáticamente con metadata...');
-      try {
-        const { data: barbershopId, error: rpcError } = await supabase.rpc(
-          'create_barbershop_on_signup',
-          {
-            p_user_id: data.user.id,
-            p_barbershop_name: barbershopName,
-            p_num_barbers: 1,
-          }
-        );
-        
-        if (!rpcError && barbershopId) {
-          console.log('[signIn] ✅ Registro completado automáticamente');
-          // Esperar un momento para que se propague
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const newProfile = await getProfile(data.user.id);
-          if (newProfile) {
-            console.log('[signIn] === LOGIN EXITOSO ===');
-            return {
-              user: {
-                id: data.user.id,
-                email: data.user.email || email,
-                role: newProfile.role,
-                barbershopId: newProfile.barbershopId,
-              },
-            };
-          }
-        } else {
-          console.error('[signIn] Error completando registro:', rpcError);
-        }
-      } catch (completeErr) {
-        console.error('[signIn] Excepción al completar registro:', completeErr);
-      }
-    }
-    
-    // Paso 3: Intentar buscar si tiene barbería existente
-    console.log('[signIn] Buscando barberías existentes...');
-    const { data: existingShops, error: shopsError } = await supabase
-      .from('barbershops')
-      .select('id, name')
-      .eq('owner_user_id', data.user.id)
-      .limit(1);
-    
-    if (!shopsError && existingShops && existingShops.length > 0) {
-      console.log('[signIn] Barbería existente encontrada:', existingShops[0]);
-      // Intentar crear perfil manualmente
-      const { error: profileInsertError } = await supabase
-        .from('user_profiles')
-        .insert({
-          user_id: data.user.id,
-          role: 'admin',
-          barbershop_id: existingShops[0].id,
-        });
+    if (error) {
+      console.error('[signIn] ❌ Error de autenticación:', error);
       
-      if (!profileInsertError) {
-        console.log('[signIn] ✅ Perfil creado manualmente');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        const newProfile = await getProfile(data.user.id);
-        if (newProfile) {
-          return {
-            user: {
-              id: data.user.id,
-              email: data.user.email || email,
-              role: newProfile.role,
-              barbershopId: newProfile.barbershopId,
-            },
-          };
-        }
-      } else {
-        console.error('[signIn] Error creando perfil manualmente:', profileInsertError);
+      if (error.message?.includes('Invalid login') || error.message?.includes('invalid')) {
+        throw new Error('Email o contraseña incorrectos');
       }
+      throw new Error(error.message || 'Error al iniciar sesión');
     }
-    
-    // Si llegamos aquí, no se pudo arreglar automáticamente
-    console.error('[signIn] ❌ No se pudo arreglar el perfil automáticamente');
-    throw new Error(
-      'Tu cuenta no tiene un perfil configurado.\n\n' +
-      'SOLUCIÓN:\n' +
-      '1. Abre Supabase SQL Editor\n' +
-      '2. Ejecuta el script ARREGLAR_USUARIOS_EXISTENTES.sql con tu email\n' +
-      '3. O ejecuta este SQL directo:\n' +
-      `   SELECT public.create_barbershop_on_signup('${data.user.id}', 'Mi Barbería', 1);`
-    );
-  }
 
-  console.log('[signIn] ✅ Perfil encontrado');
-  console.log('[signIn] === LOGIN EXITOSO ===');
-  
-  return {
-    user: {
-      id: data.user.id,
-      email: data.user.email || email,
-      role: profile.role,
-      barbershopId: profile.barbershopId,
-    },
-  };
+    if (!data?.user) {
+      throw new Error('No se recibió información del usuario');
+    }
+
+    console.log('[signIn] ✅ Usuario autenticado:', data.user.id);
+
+    // Paso 2: Obtener perfil (simplificado)
+    console.log('[signIn] Obteniendo perfil...');
+    const profile = await getProfile(data.user.id);
+    
+    if (!profile) {
+      console.error('[signIn] ❌ Perfil no encontrado');
+      throw new Error(
+        'Tu cuenta no tiene un perfil configurado.\n\n' +
+        'Ejecuta ARREGLAR_PERFIL_RAPIDO.sql en Supabase SQL Editor con tu email.'
+      );
+    }
+
+    console.log('[signIn] ✅ Perfil encontrado:', profile);
+    console.log('[signIn] === LOGIN EXITOSO ===');
+    
+    return {
+      user: {
+        id: data.user.id,
+        email: data.user.email || email,
+        role: profile.role,
+        barbershopId: profile.barbershopId,
+      },
+    };
+  } catch (error: any) {
+    console.error('[signIn] Error completo:', error);
+    throw error;
+  }
 }
 
 export async function signOut() {
@@ -319,27 +194,11 @@ export async function signOut() {
 export async function getSession() {
   try {
     const { data, error } = await supabase.auth.getSession();
-    if (error || !data.session?.user) {
+    if (error) {
+      console.error('[getSession] Error:', error);
       return { data: { session: null } };
     }
-
-    const profile = await getProfile(data.session.user.id);
-    if (!profile) {
-      return { data: { session: null } };
-    }
-
-    return {
-      data: {
-        session: {
-          user: {
-            id: data.session.user.id,
-            email: data.session.user.email || '',
-            role: profile.role,
-            barbershopId: profile.barbershopId,
-          },
-        },
-      },
-    };
+    return { data: { session: data.session } };
   } catch {
     return { data: { session: null } };
   }
@@ -376,84 +235,51 @@ export function onAuthStateChange(
 }
 
 export async function getProfile(userId: string) {
-  console.log('[getProfile] === INICIO ===');
   console.log('[getProfile] Buscando perfil para userId:', userId);
   
-  // Timeout de seguridad: 5 segundos máximo
-  const timeoutPromise = new Promise<null>((resolve) => {
-    setTimeout(() => {
-      console.error('[getProfile] ⏱️ TIMEOUT después de 5 segundos - La query está tardando demasiado');
-      resolve(null);
-    }, 5000);
-  });
+  try {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('role, barbershop_id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-  const queryPromise = (async () => {
-    try {
-      console.log('[getProfile] Ejecutando query a Supabase...');
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('role, barbershop_id')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (error) {
-        console.error('[getProfile] ❌ Error de Supabase:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-        });
-        
-        // Si es error de "no encontrado", es normal
-        if (error.code === 'PGRST116') {
-          console.log('[getProfile] Perfil no encontrado (normal - código PGRST116)');
-          return null;
-        }
-        
-        // Si es error de permisos RLS
-        if (error.code === '42501' || error.message?.includes('policy') || error.message?.includes('permission')) {
-          console.error('[getProfile] ❌ ERROR DE PERMISOS RLS');
-          console.error('[getProfile] La política "Users can view own profile" puede estar mal configurada');
-          console.error('[getProfile] Ejecuta SUPABASE_TODO_EN_UNO.sql nuevamente para recrear las políticas');
-        }
-        
-        return null;
-      }
-
-      console.log('[getProfile] Respuesta recibida de Supabase');
-      console.log('[getProfile] Datos recibidos:', data);
-
-      if (!data) {
-        console.log('[getProfile] No hay datos (perfil no existe en la base de datos)');
-        return null;
-      }
-
-      if (!data.role || !data.barbershop_id) {
-        console.error('[getProfile] ❌ Datos incompletos:', {
-          role: data.role,
-          barbershop_id: data.barbershop_id,
-        });
-        return null;
-      }
-
-      console.log('[getProfile] ✅ Perfil encontrado:', {
-        role: data.role,
-        barbershopId: data.barbershop_id,
-      });
-      console.log('[getProfile] === FIN ===');
+    if (error) {
+      console.error('[getProfile] Error:', error);
       
-      return {
-        role: data.role as Role,
-        barbershopId: data.barbershop_id,
-      };
-    } catch (err: any) {
-      console.error('[getProfile] ❌ Excepción en query:', err);
+      // Si es error de "no encontrado", es normal
+      if (error.code === 'PGRST116') {
+        return null;
+      }
+      
+      // Si es error de permisos RLS
+      if (error.code === '42501' || error.message?.includes('policy')) {
+        console.error('[getProfile] ❌ ERROR DE PERMISOS RLS');
+        console.error('[getProfile] Ejecuta SUPABASE_TODO_EN_UNO.sql para recrear las políticas');
+      }
+      
       return null;
     }
-  })();
 
-  // Usar Promise.race para timeout
-  return Promise.race([queryPromise, timeoutPromise]);
+    if (!data) {
+      return null;
+    }
+
+    if (!data.role || !data.barbershop_id) {
+      console.error('[getProfile] Datos incompletos:', data);
+      return null;
+    }
+
+    console.log('[getProfile] ✅ Perfil encontrado:', { role: data.role, barbershopId: data.barbershop_id });
+    
+    return {
+      role: data.role as Role,
+      barbershopId: data.barbershop_id,
+    };
+  } catch (err: any) {
+    console.error('[getProfile] Excepción:', err);
+    return null;
+  }
 }
 
 export async function getBarbershop(barbershopId: string) {
@@ -461,9 +287,11 @@ export async function getBarbershop(barbershopId: string) {
     .from('barbershops')
     .select('id, name, owner_user_id, num_barbers')
     .eq('id', barbershopId)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) return null;
+  if (error || !data) {
+    return null;
+  }
 
   return {
     id: data.id,
@@ -477,79 +305,88 @@ export async function getBarbershop(barbershopId: string) {
 // SERVICIOS
 // ============================================
 
-export async function listServices(barbershopId: string, barberUserId?: string): Promise<ServiceRecord[]> {
-  let query = supabase
-    .from('services')
-    .select('id, barbershop_id, barber_user_id, user_id, name, price, timestamp')
-    .eq('barbershop_id', barbershopId)
-    .order('timestamp', { ascending: false });
-
-  if (barberUserId) {
-    query = query.eq('barber_user_id', barberUserId);
-  }
-
-  const { data, error } = await query;
-
-  if (error) throw error;
-
-  return (data || []).map((s) => ({
-    id: s.id,
-    barbershopId: s.barbershop_id,
-    barberUserId: s.barber_user_id || s.user_id || '',
-    user_id: s.user_id,
-    name: s.name,
-    price: s.price,
-    timestamp: s.timestamp,
-  }));
-}
-
-export async function addService(record: {
-  user_id: string;
-  barberUserId: string;
-  barbershopId: string;
-  name: string;
-  price: number;
-}): Promise<ServiceRecord> {
-  if (!record.barbershopId) throw new Error('barbershopId es requerido');
-  if (!record.barberUserId) throw new Error('barberUserId es requerido');
-  if (!record.name?.trim()) throw new Error('El nombre del servicio es requerido');
-  if (!record.price || record.price <= 0) throw new Error('El precio debe ser mayor a 0');
+export async function addService(
+  barbershopId: string,
+  barberUserId: string,
+  name: string,
+  price: number
+): Promise<ServiceRecord> {
+  // Validar
+  if (!barbershopId) throw new Error('barbershopId es requerido');
+  if (!barberUserId) throw new Error('barberUserId es requerido');
+  if (!name?.trim()) throw new Error('El nombre del servicio es requerido');
+  if (!price || price <= 0) throw new Error('El precio debe ser mayor a 0');
 
   const { data, error } = await supabase
     .from('services')
     .insert({
-      user_id: record.user_id,
-      barbershop_id: record.barbershopId,
-      barber_user_id: record.barberUserId,
-      name: record.name.trim(),
-      price: record.price,
+      barbershop_id: barbershopId,
+      barber_user_id: barberUserId,
+      name: name.trim(),
+      price,
+      timestamp: new Date().toISOString(),
     })
     .select()
     .single();
 
   if (error) {
     console.error('[addService] Error:', error);
+    if (error.code === '42501') {
+      throw new Error('No tienes permisos para agregar servicios. Verifica tu rol.');
+    }
+    if (error.code === '23503') {
+      throw new Error('Error: La barbería o el barbero no existe.');
+    }
     throw new Error(error.message || 'Error agregando servicio');
+  }
+
+  if (!data) {
+    throw new Error('No se recibieron datos del servicio creado');
   }
 
   return {
     id: data.id,
     barbershopId: data.barbershop_id,
-    barberUserId: data.barber_user_id || data.user_id || '',
-    user_id: data.user_id,
+    barberUserId: data.barber_user_id,
     name: data.name,
     price: data.price,
     timestamp: data.timestamp,
   };
 }
 
-export async function deleteService(serviceId: string, requesterUserId: string) {
-  const { error } = await supabase
+export async function listServices(
+  barbershopId: string,
+  startDate?: Date,
+  endDate?: Date
+): Promise<ServiceRecord[]> {
+  let query = supabase
     .from('services')
-    .delete()
-    .eq('id', serviceId);
+    .select('*')
+    .eq('barbershop_id', barbershopId)
+    .order('timestamp', { ascending: false });
 
-  if (error) throw new Error('No autorizado a eliminar este servicio');
+  if (startDate) {
+    query = query.gte('timestamp', startDate.toISOString());
+  }
+  if (endDate) {
+    query = query.lte('timestamp', endDate.toISOString());
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('[listServices] Error:', error);
+    throw new Error(error.message || 'Error listando servicios');
+  }
+
+  return (data || []).map((s: any) => ({
+    id: s.id,
+    barbershopId: s.barbershop_id,
+    barberUserId: s.barber_user_id,
+    name: s.name,
+    price: s.price,
+    timestamp: s.timestamp,
+  }));
 }
 
 // ============================================
@@ -570,15 +407,17 @@ export async function listBarbers(barbershopId: string): Promise<Barber[]> {
 
   if (error) {
     console.error('[listBarbers] Error:', error);
-    return [];
+    throw new Error(error.message || 'Error listando barberos');
   }
 
-  return (data || []).map((b: any) => ({
-    id: b.id,
-    email: b.email,
-    role: 'barber' as Role,
-    barbershopId: b.barbershop_id,
-  }));
+  return (data || []).map(
+    (b: any) => ({
+      id: b.user_id,
+      email: b.email,
+      role: 'barber' as Role,
+      barbershopId: b.barbershop_id,
+    })
+  );
 }
 
 export async function createBarber(
@@ -630,143 +469,122 @@ export async function updateRole(barberId: string, newRole: Role, barbershopId: 
     .eq('user_id', barberId)
     .eq('barbershop_id', barbershopId);
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(error.message || 'Error actualizando rol');
+  }
 }
 
 export async function deleteBarber(barberId: string, barbershopId: string) {
-  const { error } = await supabase
+  // Primero eliminar el perfil
+  const { error: profileError } = await supabase
     .from('user_profiles')
     .delete()
     .eq('user_id', barberId)
     .eq('barbershop_id', barbershopId);
 
-  if (error) throw error;
-
-  await supabase.auth.admin.deleteUser(barberId);
-}
-
-export async function updateBarber(barberId: string, update: { email?: string; password?: string }) {
-  if (update.email) {
-    const { error } = await supabase.auth.admin.updateUserById(barberId, {
-      email: update.email,
-    });
-    if (error) throw error;
+  if (profileError) {
+    throw new Error(profileError.message || 'Error eliminando perfil');
   }
 
-  if (update.password) {
-    const { error } = await supabase.auth.admin.updateUserById(barberId, {
-      password: update.password,
-    });
-    if (error) throw error;
+  // Luego eliminar el usuario (requiere admin)
+  try {
+    await supabase.auth.admin.deleteUser(barberId);
+  } catch (deleteError) {
+    console.warn('[deleteBarber] No se pudo eliminar el usuario de auth (puede requerir permisos admin):', deleteError);
   }
 }
 
 // ============================================
-// INVITACIONES (Simplificado)
+// INVITACIONES
 // ============================================
 
 export async function createInvite(email: string, barbershopId: string) {
-  // Simplemente crear barbero directamente
-  const barber = await createBarber(email, Math.random().toString(36).slice(-8), barbershopId);
-  return {
-    link: `${window.location.origin}`,
-    email: barber.email,
-    password: Math.random().toString(36).slice(-8),
-  };
-}
+  const password = Math.random().toString(36).slice(-8);
+  const inviteCode = Math.random().toString(36).slice(-8);
+  
+  const { data, error } = await supabase
+    .from('invites')
+    .insert({
+      email,
+      barbershop_id: barbershopId,
+      password,
+      invite_code: inviteCode,
+    })
+    .select()
+    .single();
 
-export async function acceptInvite(inviteToken: string) {
-  throw new Error('Las invitaciones ahora se manejan directamente con createBarber');
+  if (error) {
+    throw new Error(error.message || 'Error creando invitación');
+  }
+
+  const link = `${window.location.origin}/invite/${inviteCode}`;
+  return { link, email, password };
 }
 
 // ============================================
-// TIPOS DE SERVICIO (localStorage)
+// META (GOALS, RANKING, ETC)
 // ============================================
 
-export interface ServiceType {
-  name: string;
-  price: number;
-  icon: string;
+export async function setGoals(barbershopId: string, monthlyGoal: number) {
+  const { error } = await supabase
+    .from('barbershops')
+    .update({ monthly_goal: monthlyGoal })
+    .eq('id', barbershopId);
+
+  if (error) {
+    throw new Error(error.message || 'Error guardando metas');
+  }
 }
 
-const DEFAULT_SERVICE_TYPES: ServiceType[] = [
-  { name: 'Corte', price: 6500, icon: '✂️' },
-  { name: 'Corte y perfilado', price: 7000, icon: '✂️✨' },
-  { name: 'Corte y barba', price: 7500, icon: '✂️🧔' },
-  { name: 'Corte barba y perfilado', price: 8000, icon: '✂️🧔✨' },
-];
+export async function getRanking(barbershopId: string, month: number, year: number) {
+  const { data, error } = await supabase.rpc('get_barber_ranking', {
+    p_barbershop_id: barbershopId,
+    p_month: month,
+    p_year: year,
+  });
 
-const LS_SERVICE_TYPES = 'mock_service_types';
+  if (error) {
+    console.error('[getRanking] Error:', error);
+    return [];
+  }
 
-export async function getServiceTypes(): Promise<ServiceType[]> {
-  try {
-    const raw = localStorage.getItem(LS_SERVICE_TYPES);
-    if (raw) {
-      return JSON.parse(raw);
+  return data || [];
+}
+
+export async function getServiceTypes(barbershopId: string) {
+  const { data, error } = await supabase
+    .from('service_types')
+    .select('*')
+    .eq('barbershop_id', barbershopId);
+
+  if (error) {
+    console.error('[getServiceTypes] Error:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function setServiceTypes(barbershopId: string, types: string[]) {
+  // Eliminar tipos existentes
+  await supabase
+    .from('service_types')
+    .delete()
+    .eq('barbershop_id', barbershopId);
+
+  // Insertar nuevos tipos
+  if (types.length > 0) {
+    const { error } = await supabase
+      .from('service_types')
+      .insert(
+        types.map((name) => ({
+          barbershop_id: barbershopId,
+          name: name.trim(),
+        }))
+      );
+
+    if (error) {
+      throw new Error(error.message || 'Error guardando tipos de servicio');
     }
-    localStorage.setItem(LS_SERVICE_TYPES, JSON.stringify(DEFAULT_SERVICE_TYPES));
-    return DEFAULT_SERVICE_TYPES;
-  } catch {
-    return DEFAULT_SERVICE_TYPES;
   }
-}
-
-export async function setServiceTypes(serviceTypes: ServiceType[]) {
-  localStorage.setItem(LS_SERVICE_TYPES, JSON.stringify(serviceTypes));
-}
-
-// ============================================
-// METAS Y RANKING (Simplificado)
-// ============================================
-
-export async function setSchedule(
-  barberId: string,
-  schedule: { [weekday: number]: Array<{ start: string; end: string }> }
-) {
-  console.log('setSchedule not implemented yet', barberId, schedule);
-}
-
-export async function setGoals(
-  barberId: string,
-  goals: {
-    weekly?: { targetServices?: number; targetRevenue?: number };
-    monthly?: { targetServices?: number; targetRevenue?: number };
-  }
-) {
-  console.log('setGoals not implemented yet', barberId, goals);
-}
-
-export async function getRanking(barbershopId: string, period: 'day' | '7d' | 'month') {
-  const barbers = await listBarbers(barbershopId);
-  const services = await listServices(barbershopId);
-  const now = new Date();
-  let start = new Date(now);
-  
-  if (period === 'day') {
-    start.setHours(0, 0, 0, 0);
-  } else if (period === '7d') {
-    start.setDate(now.getDate() - 7);
-  } else if (period === 'month') {
-    start = new Date(now.getFullYear(), now.getMonth(), 1);
-  }
-  
-  const within = services.filter((s) => new Date(s.timestamp) >= start);
-  const byBarber: Record<string, { services: number; revenue: number }> = {};
-  
-  for (const s of within) {
-    const key = s.barberUserId;
-    if (!byBarber[key]) byBarber[key] = { services: 0, revenue: 0 };
-    byBarber[key].services += 1;
-    byBarber[key].revenue += s.price;
-  }
-  
-  const rows = barbers.map((b) => ({
-    id: b.id,
-    email: b.email,
-    services: byBarber[b.id]?.services || 0,
-    revenue: byBarber[b.id]?.revenue || 0,
-  }));
-  
-  rows.sort((a, b) => b.revenue - a.revenue || b.services - a.services);
-  return rows;
 }
